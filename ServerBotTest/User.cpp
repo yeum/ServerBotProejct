@@ -1,28 +1,87 @@
 #include "User.h"
 
+User::User(boost::asio::io_context& io_context) : 
+socket_(io_context)
+{
+    connect_to_server(io_context);
+}
+
+User::User(boost::asio::io_context& io_context, string account_id) : 
+socket_(io_context), 
+account_id_(account_id)
+{
+    connect_to_server(io_context);
+}
+
+void User::connect_to_server(boost::asio::io_context& io_context)
+{
+        // connect 시도
+    boost::asio::ip::tcp::resolver resolver(io_context);
+    boost::asio::ip::tcp::resolver::query query(IP_ADDR, PORT);
+ 
+    resolver.async_resolve(query, &User::resolve_handler);
+}
+
+void User::resolve_handler (const boost::system::error_code & ec, tcp::resolver::results_type results)
+{
+    if (ec)
+        return;
+
+    boost::asio::async_connect(socket_, results, &User::handle_connect);
+}
+
 void User::post_receive()
 {
+    recv_buff_.fill(0);
     // async_recv 요청
-    return;
+    socket_.async_read_some(boost::asio::buffer(recv_buff_, MAX_RECV_BUFF_LENGTH), &User::handle_receive);
 }
 
-void User::handle_connect()
+void User::handle_connect(const boost::system::error_code& ec, const tcp::endpoint& endpoint)
 {
     // 실패 시 프로그램 종료
-
+    if(ec)
+        return;
+    
     // connect 성공
-    send_login_req();
+    cout<<"Connect Succeed!\n";
+    post_receive();
 }
 
-void User::handle_send()
+void User::handle_send(boost::system::error_code ec, std::size_t byte_transffered)
 {
+    int packet_size_len = 0;
+    memcpy(&packet_size_len, &send_buff_[0], PACKET_SIZE_LENGTH);
 
+    if(packet_size_len > byte_transffered)
+    {
+        array<uint8_t, MAX_SEND_BUFF_LENGTH> temp_buff;
+        memcpy(&temp_buff[0], &send_buff_[0], packet_size_len - byte_transffered);
+        send_buff_.fill(0);
+        memcpy(&send_buff_[0], &temp_buff[0], packet_size_len - byte_transffered);
+
+        socket_.async_send(boost::asio::buffer(send_buff_, MAX_SEND_BUFF_LENGTH), &User::handle_send);
+        return;
+    }
+    send_buff_.fill(0);
 }
 
-void User::handle_receive()
+void User::handle_receive(boost::system::error_code ec, std::size_t byte_transffered)
 {
     // 패킷 조립
-    // ...
+    // 패킷전체 사이즈 가져오기
+    int packet_size_len = 0;
+    memcpy(&packet_size_len, &recv_buff_[0], PACKET_SIZE_LENGTH);
+
+    // 덜 들어왔으면 넘기기
+    if(packet_size_len > recv_buff_.size())
+    {
+        post_receive();
+        return;
+    }
+
+    // 패킷헤더를 분리해서 process_packet에 인자로 넘겨 실행
+
     post_receive();
     // 패킷 완성 시 recv_queue_에 recv_buff_내용 복사
     // ...
@@ -30,7 +89,8 @@ void User::handle_receive()
 
 void User::start_scenario()
 {
-    // connect 시도
+    // 첫 번째 시나리오 프로토콜 전송
+    send_login_req();
 }
 
 void User::process_packet(int packet_header, vector<uint8_t>& packet)
